@@ -3,7 +3,8 @@
 //
 // Screens (inside a phone frame):
 //   rewards → balance + rewards list
-//   stepUp  → only for redemptions above the threshold: authenticator code
+//   stepUp  → only for redemptions above the threshold: passkey or
+//             authenticator code, whichever Leo set up
 //   done    → reward confirmed, new balance
 //
 // All decisions happen on the server (routes/loyalty.js).
@@ -16,6 +17,7 @@
   let view;
   let data;    // from /api/loyalty/start
   let pending; // reward waiting for the step-up code
+  let factors; // which of { passkey, totp } Leo has
   let done;
   let error;
 
@@ -75,13 +77,8 @@
           <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
         </div>
         <h3 class="app-h center">Confirm it’s you</h3>
-        <p class="muted center">You're redeeming ${pts(pending.points)} points for the ${esc(pending.name)}. For larger rewards, please enter the code from your authenticator app.</p>
-        <form id="loyalty-stepup-form" novalidate>
-          <div class="field"><label for="f-loyalty-code">6-digit code</label>
-            <input id="f-loyalty-code" class="code-input" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
-          ${errorBox()}
-          <button class="btn btn-block" type="submit" id="loyalty-stepup-btn">Confirm redemption</button>
-        </form>
+        <p class="muted center">You're redeeming ${pts(pending.points)} points for the ${esc(pending.name)}. For larger rewards, please confirm with your ${factors.passkey ? 'passkey' : 'authenticator app'}.</p>
+        ${Twill.passkey.choiceHtml({ factors, formId: 'loyalty-stepup-form', inputId: 'f-loyalty-code', buttonId: 'loyalty-stepup-btn', buttonLabel: 'Confirm redemption', error: error && esc(error) })}
         <p class="center"><a href="#" class="muted" data-action="cancel">Cancel</a></p>
       </div>`,
 
@@ -108,6 +105,9 @@
       document.getElementById('f-loyalty-code').focus();
     }
 
+    const passkeyBtn = stage.querySelector('[data-passkey]');
+    if (passkeyBtn) passkeyBtn.addEventListener('click', () => onPasskey(passkeyBtn));
+
     stage.querySelectorAll('[data-action]').forEach((a) => a.addEventListener('click', (e) => {
       e.preventDefault();
       error = null;
@@ -123,6 +123,7 @@
     error = null;
     if (res.data.status === 'step_up') {
       pending = res.data.reward;
+      factors = res.data.factors;
       return show('stepUp');
     }
     finish(res.data.redemption);
@@ -134,6 +135,15 @@
     const btn = document.getElementById('loyalty-stepup-btn');
     ui.busy(btn, true, 'Checking…');
     const res = await Twill.post('/api/loyalty/step-up', { code });
+    if (!res.ok) { error = res.data.error; return show('stepUp'); }
+    error = null;
+    finish(res.data.redemption);
+  }
+
+  // Step-up with the passkey: the device signs a challenge, the server checks it.
+  async function onPasskey(btn) {
+    ui.busy(btn, true, 'Waiting for your device…');
+    const res = await Twill.passkey.confirm('/api/loyalty/step-up');
     if (!res.ok) { error = res.data.error; return show('stepUp'); }
     error = null;
     finish(res.data.redemption);

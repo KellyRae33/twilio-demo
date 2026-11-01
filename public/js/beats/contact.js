@@ -18,7 +18,7 @@
   let view;
   let info;      // from /api/contact/start
   let form;      // { newEmail, newPhone, country }
-  let methods;   // which existing factors are allowed: 'totp', 'sms_old'
+  let methods;   // which existing factors are allowed: 'passkey', 'totp', 'sms_old'
   let method;    // the one Leo picked
   let codeSent;  // has a code been sent for the current step?
   let newPhoneMasked;
@@ -79,9 +79,10 @@
 
     verify: () => `
       <h1>Confirm it's you</h1>
-      <p class="sub">To protect your account, confirm this change using your authenticator app${methods.includes('sms_old') ? ' or your current phone number' : ''}.</p>
+      <p class="sub">To protect your account, confirm this change using ${methods.includes('passkey') ? 'your passkey' : 'your authenticator app'}${methods.includes('sms_old') ? ' or your current phone number' : ''}.</p>
       ${!method ? `
         <div class="method-list">
+          ${methods.includes('passkey') ? '<button class="method" data-method="passkey"><b>Passkey</b><span class="muted">Confirm with Face ID, fingerprint, Windows Hello or your phone</span></button>' : ''}
           ${methods.includes('totp') ? '<button class="method" data-method="totp"><b>Authenticator app</b><span class="muted">Enter the 6-digit code from your app</span></button>' : ''}
           ${methods.includes('sms_old') ? `<button class="method" data-method="sms_old"><b>Text message</b><span class="muted">Send a code to ${esc(ending(info.phoneMasked))}</span></button>` : ''}
         </div>
@@ -161,6 +162,14 @@
   // 2. Leo picks a method. For SMS, the code goes to his CURRENT number.
   async function chooseMethod(m) {
     error = null;
+    if (m === 'passkey') {
+      // No code to type: the device signs a challenge and the server checks it.
+      const btn = stage.querySelector('[data-method="passkey"]');
+      ui.busy(btn, true, 'Waiting for your device…');
+      const res = await Twill.passkey.confirm('/api/contact/verify-identity', { method: 'passkey' });
+      if (!res.ok) { error = res.data.error; return show('verify'); }
+      return identityConfirmed(res);
+    }
     if (m === 'sms_old') {
       const res = await Twill.post('/api/contact/send-old-code');
       if (!res.ok) { error = res.data.error; return show('verify'); }
@@ -177,6 +186,10 @@
     ui.busy(btn, true, 'Checking…');
     const res = await Twill.post('/api/contact/verify-identity', { method, code });
     if (!res.ok) { error = res.data.error; return show('verify'); }
+    identityConfirmed(res);
+  }
+
+  function identityConfirmed(res) {
     error = null;
     codeSent = false;
     newPhoneMasked = res.data.newPhoneMasked;

@@ -65,6 +65,17 @@ Twill.presenter = (function () {
         <div>Recent SIM swap<small>Beats 2–3: SIM Swap reports a swap in the last 48h</small></div>
         ${toggle('recentSimSwap', s.scenarios.recentSimSwap, 'data-scenario-bool="recentSimSwap"')}
       </div>
+      <div class="ctl-row">
+        <div>Number reassigned<small>Beat 2: Reassigned Number says Leo's number now belongs to someone else</small></div>
+        ${toggle('reassignedNumber', s.scenarios.reassignedNumber, 'data-scenario-bool="reassignedNumber"')}
+      </div>
+      <div class="ctl-row">
+        <div>New number's line status<small>Beat 3: force the Line Status result for Leo's new number</small></div>
+        <select data-scenario="lineStatusOverride">
+          ${[['none', 'Normal (reachable)'], ['inactive', 'Inactive'], ['unreachable', 'Unreachable']]
+            .map(([v, l]) => `<option value="${v}" ${s.scenarios.lineStatusOverride === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+      </div>
 
       <h3>Shortcuts</h3>
       <div id="totp-helper"></div>

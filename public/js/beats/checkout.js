@@ -4,8 +4,9 @@
 // Screens (inside a phone frame):
 //   bag     → quantities, ship-to (Home or a new Studio address), Place order
 //   placing → spinner while the server runs its checks (Leo sees nothing else)
-//   stepUp  → only if a risk rule fired: enter a code. By SMS normally; from
-//             the authenticator app if the SIM was swapped recently
+//   stepUp  → only if a risk rule fired: enter a code. By SMS normally; Leo's
+//             passkey or authenticator app if the SIM was swapped recently or
+//             the number now belongs to someone else
 //   done    → order confirmed
 //
 // All decisions happen on the server (routes/checkout.js).
@@ -20,7 +21,9 @@
   let data;     // from /api/checkout/start: products, giveawayOrder, shipping
   let qty;      // { tin: 6, ... }
   let shipTo;   // 'home' | 'new'
-  let stepMethod;   // 'sms' | 'totp'
+  let stepMethod;   // 'sms' | 'factor' (passkey or authenticator app)
+  let stepReason;   // why not SMS: 'sim_swap' | 'reassigned'
+  let factors;      // which of { passkey, totp } Leo has
   let phoneEnding;  // last 4 digits, for "We texted a code to •••• 9078"
   let placed;
   let error;
@@ -109,15 +112,17 @@
           <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
         </div>
         <h3 class="app-h center">Confirm it’s you</h3>
-        <p class="muted center">${stepMethod === 'totp'
-          ? 'We noticed a recent change to your mobile service. To keep your account safe, please enter the code from your authenticator app.'
+        <p class="muted center">${stepMethod === 'factor'
+          ? `${stepReason === 'reassigned' ? "We can't send a text to your number on file right now." : 'We noticed a recent change to your mobile service.'} To keep your account safe, please confirm with your ${factors.passkey ? 'passkey' : 'authenticator app'}.`
           : `To protect this order, we texted a code to •••• ${esc(phoneEnding)}.`}</p>
-        <form id="stepup-form" novalidate>
+        ${stepMethod === 'factor'
+          ? Twill.passkey.choiceHtml({ factors, formId: 'stepup-form', inputId: 'f-stepup', buttonId: 'stepup-btn', buttonLabel: 'Confirm order', error: error && esc(error) })
+          : `<form id="stepup-form" novalidate>
           <div class="field"><label for="f-stepup">6-digit code</label>
             <input id="f-stepup" class="code-input" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
           ${error ? `<div class="notice notice-warn">${esc(error)}</div>` : ''}
           <button class="btn btn-block" type="submit" id="stepup-btn">Confirm order</button>
-        </form>
+        </form>`}
         ${stepMethod === 'sms' ? '<p class="center"><a href="#" class="muted" data-action="resend">Send a new code</a></p>' : ''}
       </div>`,
 
@@ -150,6 +155,9 @@
       document.getElementById('f-stepup').focus();
     }
 
+    const passkeyBtn = stage.querySelector('[data-passkey]');
+    if (passkeyBtn) passkeyBtn.addEventListener('click', () => onPasskey(passkeyBtn));
+
     const again = stage.querySelector('[data-action="again"]');
     if (again) again.addEventListener('click', () => { error = null; show('bag'); });
 
@@ -165,6 +173,8 @@
     if (!res.ok) { error = res.data.error; return show('bag'); }
     if (res.data.status === 'step_up') {
       stepMethod = res.data.method;
+      stepReason = res.data.reason;
+      factors = res.data.factors;
       phoneEnding = res.data.phoneEnding;
       show('stepUp');
       if (res.data.simulatedCode) ui.smsToast(`Your Twill verification code is: ${res.data.simulatedCode}`);
@@ -187,6 +197,15 @@
     const btn = document.getElementById('stepup-btn');
     ui.busy(btn, true, 'Checking…');
     const res = await Twill.post('/api/checkout/step-up', { code });
+    if (!res.ok) { error = res.data.error; return show('stepUp'); }
+    error = null;
+    finish(res.data.order);
+  }
+
+  // Step-up with the passkey: the device signs a challenge, the server checks it.
+  async function onPasskey(btn) {
+    ui.busy(btn, true, 'Waiting for your device…');
+    const res = await Twill.passkey.confirm('/api/checkout/step-up');
     if (!res.ok) { error = res.data.error; return show('stepUp'); }
     error = null;
     finish(res.data.order);

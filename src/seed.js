@@ -26,6 +26,7 @@ function ensureLeoAccount() {
       username: a.username || leo.username,
       phone: a.phone || config.leo.phone,
       phoneVerified: true,
+      phoneVerifiedAt: a.phoneVerifiedAt || new Date(Date.now() - config.checkout.seededPhoneVerifiedDaysAgo * 86400000).toISOString(),
       address: a.address || { line1: leo.addressLine1, city: leo.city, state: leo.state, postalCode: leo.postalCode, country: leo.country },
       consent: a.consent || { account: true, marketing: true, timestamp: new Date().toISOString(), source: 'demo seed' },
       verifyIdentity: a.verifyIdentity || crypto.randomBytes(16).toString('hex'),
@@ -37,7 +38,8 @@ function ensureLeoAccount() {
     a.trust = { level: 'high', score: 100 };
     filled.push('Identity Match trust "high"');
   }
-  if (!a.totp || !a.totp.verified) {
+  // A second factor, unless Leo already set one up (authenticator or passkey).
+  if ((!a.totp || !a.totp.verified) && !(a.passkey && a.passkey.verified)) {
     // An authenticator factor created on our side, with no QR scan. The
     // presenter drawer shows its current 6-digit code.
     a.totp = { factorSid: 'YF' + crypto.randomBytes(16).toString('hex'), mode: 'SIMULATED', secret: totpLocal.newSecret(), verified: true };

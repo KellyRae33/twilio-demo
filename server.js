@@ -22,6 +22,7 @@ app.use(perVisitor); // each browser gets its own copy of Leo's story (src/state
 // API routes, one file per part of the story.
 app.use('/api', require('./routes/presenter'));
 app.use('/api/signup', require('./routes/signup')); // Beat 1
+app.use('/api/passkey', require('./routes/passkey')); // passkey set-up and prompts (Beats 1–4)
 app.use('/api/checkout', require('./routes/checkout')); // Beat 2
 app.use('/api/contact', require('./routes/contact')); // Beat 3
 app.use('/api/loyalty', require('./routes/loyalty')); // Beat 4

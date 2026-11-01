@@ -1,5 +1,6 @@
 // =============================================================================
 // verify.js — Twilio Verify: SMS codes and TOTP (authenticator app) factors.
+// Passkeys live in passkeys.js; confirmSecondFactor() below uses either.
 //
 // Each function returns { ok, ...details, entries: [panel entries] } and never
 // throws, so the routes stay short.
@@ -13,6 +14,7 @@ const sim = require('./simulated');
 const totpLocal = require('./totpLocal');
 const { entry, toApiShape, hideSecret } = require('./panel');
 const { friendlyError } = require('./errors');
+const passkeys = require('./passkeys');
 
 const SERVICE = '{VerifyServiceSid}';
 const FRIENDLY_NAME = 'Twill account'; // shown in the authenticator app; no personal data
@@ -298,10 +300,26 @@ async function challengeTotp(identity, code, title, approvedDecision) {
   };
 }
 
+// -----------------------------------------------------------------------------
+// Step-up with whichever second factor Leo used. The browser sends either
+// { passkey: <signed challenge> } or { code: '123456' } from the authenticator.
+// label goes in the panel title, e.g. "step-up". Returns { ok, approved, entries }.
+// -----------------------------------------------------------------------------
+async function confirmSecondFactor(req, body, label, approvedDecision) {
+  if (body && body.passkey) {
+    return passkeys.approveChallenge(req, body.passkey, `Verified Leo's passkey (${label})`, approvedDecision);
+  }
+  const code = String((body && body.code) || '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return { ok: false, error: { status: 400, customer: 'Enter the 6-digit code from your authenticator app.' }, entries: [] };
+  }
+  return challengeTotp(state.account.verifyIdentity, code, `Verified the authenticator code (${label})`, approvedDecision);
+}
+
 // For the presenter: the current code of a SIMULATED factor (handy if no phone).
 function simulatedTotpCode() {
   const totp = state.account.totp;
   return totp && totp.mode === 'SIMULATED' && totp.secret ? totpLocal.currentCode(totp.secret) : null;
 }
 
-module.exports = { sendSmsCode, checkSmsCode, createTotpFactor, verifyTotpFactor, challengeTotp, simulatedTotpCode };
+module.exports = { sendSmsCode, checkSmsCode, createTotpFactor, verifyTotpFactor, challengeTotp, confirmSecondFactor, simulatedTotpCode };

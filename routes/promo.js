@@ -12,8 +12,9 @@
 // The defences, cheapest first:
 //   1. Duplicate check       one verified number per promo   (our server, free)
 //   2. Lookup line type      no VoIP / premium numbers       (LIVE for ≤5, rest simulated)
-//   3. Verify Fraud Guard    blocks a prefix under attack    (simulated)
-//   4. Send the code         only what survived              (simulated: these are fake numbers)
+//   3. Lookup Line Status    skip disconnected / switched-off numbers (simulated)
+//   4. Verify Fraud Guard    blocks a prefix under attack    (simulated)
+//   5. Send the code         only what survived              (simulated: these are fake numbers)
 //
 // Nothing here texts a real phone.
 // =============================================================================
@@ -37,7 +38,7 @@ const digits = (n) => Array.from({ length: n }, () => crypto.randomInt(0, 10)).j
 const usNumber = () => `+1${pick(AREA_CODES)}${crypto.randomInt(2, 10)}${digits(6)}`;
 
 // What each kind of sign-up looks like to Lookup.
-const LINE_TYPE = { goodMobile: 'mobile', duplicate: 'mobile', voip: 'nonFixedVoip', premium: 'premium', sequentialPumping: 'mobile' };
+const LINE_TYPE = { goodMobile: 'mobile', duplicate: 'mobile', inactive: 'mobile', voip: 'nonFixedVoip', premium: 'premium', sequentialPumping: 'mobile' };
 
 function shuffle(list) {
   for (let i = list.length - 1; i > 0; i--) {
@@ -54,6 +55,7 @@ function buildSignups() {
 
   const normal = shuffle([
     ...Array.from({ length: mix.goodMobile }, () => ({ phone: usNumber(), kind: 'goodMobile' })),
+    ...Array.from({ length: mix.inactive }, () => ({ phone: usNumber(), kind: 'inactive' })),
     ...Array.from({ length: mix.voip }, () => ({ phone: usNumber(), kind: 'voip' })),
     ...Array.from({ length: mix.premium }, () => ({ phone: `+1900${crypto.randomInt(2, 10)}${digits(6)}`, kind: 'premium' })),
   ]);
@@ -95,7 +97,7 @@ router.post('/launch', async (req, res) => {
     title: `Launched promo ${P.code}: ${signups.length} sign-ups in under a minute`,
     mode: 'APP',
     request: { promo: P.code, sign_ups: signups.length },
-    response: { checks_in_order: ['1. one verified number per promo', '2. Lookup line type', '3. Verify Fraud Guard', '4. send code'] },
+    response: { checks_in_order: ['1. one verified number per promo', '2. Lookup line type', '3. Lookup Line Status', '4. Verify Fraud Guard', '5. send code'] },
     decision: 'Run every sign-up through the cheapest checks first, so we only pay to text real customers.',
     note: `Also in place: our own rate limit on "send code" (${config.rateLimit.maxSendsPerPhone} per number and ${config.rateLimit.maxSendsPerClient} per client every ${config.rateLimit.windowMinutes} min) and Verify's built-in limits. Bots from one source hit those first; this burst is spread out to show the other layers.`,
   }));
@@ -133,7 +135,8 @@ router.post('/launch', async (req, res) => {
   const redeemed = new Set();
   const prefixCounts = {};
   const results = [];
-  const counts = { attempted: signups.length, blockedLineType: 0, blockedFraudGuard: 0, blockedDuplicate: 0, sent: 0 };
+  const counts = { attempted: signups.length, blockedLineType: 0, blockedLineStatus: 0, blockedFraudGuard: 0, blockedDuplicate: 0, sent: 0 };
+  const lineStatusCounts = {};
   const simulatedTypeCounts = {};
   let spendAvoided = 0;
   let spendSent = 0;
@@ -163,6 +166,15 @@ router.post('/launch', async (req, res) => {
         result.outcome = 'blocked_line_type';
         result.detail = `Line type: ${lineType}`;
         counts.blockedLineType++;
+        spendAvoided += cost;
+      } else if (s.kind === 'inactive') {
+        // Line Status: a mobile, but disconnected or switched off. A code
+        // would never arrive, so don't pay to send it.
+        const status = crypto.randomInt(0, 3) ? 'inactive' : 'unreachable';
+        lineStatusCounts[status] = (lineStatusCounts[status] || 0) + 1;
+        result.outcome = 'blocked_line_status';
+        result.detail = `Line status: ${status}`;
+        counts.blockedLineStatus++;
         spendAvoided += cost;
       } else {
         // Fraud Guard watches traffic per prefix and blocks one under attack.
@@ -200,7 +212,20 @@ router.post('/launch', async (req, res) => {
       : `Lookup is simulated right now (${lookupMode.why}).`,
   }));
 
-  // 3. Fraud Guard.
+  // 3. Line Status.
+  const exampleInactive = (results.find((r) => r.outcome === 'blocked_line_status') || { phone: '+15035550188' }).phone;
+  entries.push(entry({
+    title: `Line Status skipped ${counts.blockedLineStatus} numbers that can't receive a text`,
+    mode: 'SIMULATED',
+    api: 'GET https://lookups.twilio.com/v2/PhoneNumbers/{phone}?Fields=line_status',
+    request: { numbers: counts.attempted - counts.blockedDuplicate - counts.blockedLineType, Fields: 'line_status' },
+    response: { statuses_blocked: lineStatusCounts, example_response: sim.lookupLineStatus(exampleInactive, 'inactive') },
+    decision: 'Real mobile line types, but disconnected ("inactive") or switched off ("unreachable") → no code sent. Typos and old numbers stop here.',
+    note: 'Public beta; coverage varies by network, so "unknown" is never blocked. Simulated here.',
+    phones: [exampleInactive],
+  }));
+
+  // 4. Fraud Guard.
   const burstPrefix = '+447700900';
   entries.push(entry({
     title: `Verify Fraud Guard blocked the ${burstPrefix} prefix`,
@@ -232,7 +257,7 @@ router.post('/launch', async (req, res) => {
     decision: 'One verified number per promo → a number that already got LEOBAKES20 gets no new code.',
   }));
 
-  // 4. Sends.
+  // 5. Sends.
   entries.push(entry({
     title: `Sent codes to the ${counts.sent} sign-ups that passed`,
     mode: 'SIMULATED',

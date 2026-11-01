@@ -113,7 +113,16 @@ function lookupSmsPumpingRisk(phone, score) {
   };
 }
 
-// GET /v2/PhoneNumbers/{phone}?Fields=reassigned_number&LastVerifiedDate=YYYYMMDD   (Beat 5)
+// GET /v2/PhoneNumbers/{phone}?Fields=line_status   (Beats 3 and 5; public beta)
+// status: 'active' | 'reachable' | 'unreachable' | 'inactive' | 'unknown'
+function lookupLineStatus(phone, status = 'reachable') {
+  return {
+    ...lookupBase(phone),
+    line_status: { status, error_code: null },
+  };
+}
+
+// GET /v2/PhoneNumbers/{phone}?Fields=reassigned_number&LastVerifiedDate=YYYYMMDD   (Beats 2 and 5)
 // answer: 'yes' | 'no' | 'no_data_available'
 function lookupReassignedNumber(phone, lastVerifiedDate, answer) {
   return {
@@ -261,16 +270,96 @@ function challengeCreate(identity, factorSid, approved, message) {
   };
 }
 
+// -----------------------------------------------------------------------------
+// Verify Passkeys (all under /v2/Services/{ServiceSid}/Passkeys/...)
+// `options` is what the browser hands to navigator.credentials.create()/get().
+// -----------------------------------------------------------------------------
+
+// POST /Passkeys/Factors
+function passkeyFactorCreate(identity, factorSid, relyingParty, options) {
+  return {
+    sid: factorSid,
+    account_sid: ACCOUNT_SID,
+    service_sid: SERVICE_SID,
+    entity_sid: sid('YE'),
+    identity,
+    binding: null,
+    options,
+    status: 'unverified',
+    factor_type: 'passkeys',
+    friendly_name: 'Twill account',
+    config: {
+      relying_party: relyingParty,
+      authenticator_attachment: 'any',
+      discoverable_credentials: 'preferred',
+      user_verification: 'preferred',
+    },
+    metadata: null,
+    date_created: now(),
+    date_updated: now(),
+    url: `https://verify.twilio.com/v2/Services/${SERVICE_SID}/Passkeys/Factors/${factorSid}`,
+  };
+}
+
+// POST /Passkeys/VerifyFactor
+function passkeyFactorVerify(identity, factorSid, relyingParty, verified) {
+  return {
+    sid: factorSid,
+    account_sid: ACCOUNT_SID,
+    service_sid: SERVICE_SID,
+    entity_sid: sid('YE'),
+    identity,
+    status: verified ? 'verified' : 'unverified',
+    factor_type: 'passkeys',
+    friendly_name: 'Twill account',
+    config: { relying_party: relyingParty },
+    metadata: null,
+    date_created: now(),
+    date_updated: now(),
+    url: `https://verify.twilio.com/v2/Services/${SERVICE_SID}/Passkeys/Factors/${factorSid}`,
+  };
+}
+
+// POST /Passkeys/Challenges (status "pending", with options) and
+// POST /Passkeys/ApproveChallenge (status "approved" or "denied")
+function passkeyChallenge(identity, factorSid, status, options = null) {
+  const challengeSid = sid('YC');
+  return {
+    sid: challengeSid,
+    account_sid: ACCOUNT_SID,
+    service_sid: SERVICE_SID,
+    entity_sid: sid('YE'),
+    identity,
+    factor_sid: factorSid,
+    factor_type: 'passkeys',
+    status,
+    responded_reason: 'none',
+    options,
+    details: null,
+    hidden_details: null,
+    metadata: null,
+    date_created: now(),
+    date_updated: now(),
+    date_responded: status === 'pending' ? null : now(),
+    expiration_date: new Date(Date.now() + 5 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    url: `https://verify.twilio.com/v2/Services/${SERVICE_SID}/Passkeys/Challenges/${challengeSid}`,
+  };
+}
+
 module.exports = {
   lookupLineType,
   lookupIdentityMatch,
   lookupSimSwap,
   lookupSmsPumpingRisk,
   lookupReassignedNumber,
+  lookupLineStatus,
   fraudGuardBlocked,
   verificationCreate,
   verificationCheck,
   factorCreate,
   factorVerify,
   challengeCreate,
+  passkeyFactorCreate,
+  passkeyFactorVerify,
+  passkeyChallenge,
 };

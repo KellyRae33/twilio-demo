@@ -9,8 +9,10 @@
 //                                      the CURRENT number → which existing
 //                                      factors may be used to prove it's Leo
 //   POST /api/contact/send-old-code    SMS to the OLD number (if allowed)
-//   POST /api/contact/verify-identity  check the TOTP or old-number SMS code
-//   POST /api/contact/send-new-code    Lookup line type → SMS to the NEW number
+//   POST /api/contact/verify-identity  check the TOTP code, passkey, or
+//                                      old-number SMS code
+//   POST /api/contact/send-new-code    Lookup line type → Line Status → SMS to
+//                                      the NEW number
 //   POST /api/contact/confirm-new      check that code → save → notify old
 //                                      email and phone
 //
@@ -22,7 +24,7 @@ const config = require('../config');
 const { state } = require('../src/state');
 const { entry, maskPhone } = require('../src/panel');
 const { toE164 } = require('../src/phone');
-const { checkLineType, checkSimSwap } = require('../src/lookup');
+const { checkLineType, checkSimSwap, checkLineStatus } = require('../src/lookup');
 const verify = require('../src/verify');
 const rateLimit = require('../src/rateLimit');
 const { ensureLeoAccount } = require('../src/seed');
@@ -96,6 +98,7 @@ router.post('/request', async (req, res) => {
 
   // Which existing factors may prove it's Leo?
   const methods = [];
+  if (a.passkey && a.passkey.verified) methods.push('passkey');
   if (a.totp && a.totp.verified) methods.push('totp');
   if (!simSwap.swappedRecently) methods.push('sms_old');
 
@@ -104,8 +107,8 @@ router.post('/request', async (req, res) => {
     mode: 'APP',
     response: { allowed_methods: methods },
     decision: simSwap.swappedRecently
-      ? 'Recent SIM swap → authenticator app ONLY. A text to the current number could be going to the attacker.'
-      : 'SIM looks stable → offer the authenticator app, or a code by SMS to the CURRENT number. Never the new one.',
+      ? 'Recent SIM swap → passkey or authenticator app ONLY. A text to the current number could be going to the attacker.'
+      : 'SIM looks stable → offer Leo\'s passkey or authenticator app, or a code by SMS to the CURRENT number. Never the new one.',
     phones: [a.phone],
   }));
 
@@ -149,17 +152,19 @@ router.post('/verify-identity', async (req, res) => {
   const { method } = req.body || {};
   const code = String((req.body || {}).code || '').trim();
   if (!p.methods.includes(method)) return reply(res, 400, { error: 'That verification method isn\'t available.' });
-  if (!/^\d{4,10}$/.test(code)) return reply(res, 400, { error: 'Please enter the code.' });
+  if (method !== 'passkey' && !/^\d{4,10}$/.test(code)) return reply(res, 400, { error: 'Please enter the code.' });
 
   let result;
-  if (method === 'totp') {
-    result = await verify.challengeTotp(state.account.verifyIdentity, code,
-      'Verified the authenticator code (existing factor)', 'it really is Leo. Allow the contact change to continue.');
+  if (method === 'passkey' || method === 'totp') {
+    result = await verify.confirmSecondFactor(req, req.body, 'existing factor', 'it really is Leo. Allow the contact change to continue.');
   } else {
     result = await verify.checkSmsCode(state.account.phone, code, 'Checked the code sent to the CURRENT number');
   }
   if (!result.ok) return reply(res, result.error.status || 400, { error: result.error.customer, entries: result.entries });
-  if (!result.approved) return reply(res, 400, { error: "That code didn't match. Please try again.", entries: result.entries });
+  if (!result.approved) {
+    const error = method === 'passkey' ? "We couldn't confirm your passkey. Please try again." : "That code didn't match. Please try again.";
+    return reply(res, 400, { error, entries: result.entries });
+  }
 
   p.identityVerified = true;
   reply(res, 200, { verified: true, newPhoneMasked: maskPhone(p.newPhone), entries: result.entries });
@@ -180,6 +185,12 @@ router.post('/send-new-code', async (req, res) => {
   const lookup = await checkLineType(p.newPhone);
   entries.push(...lookup.entries);
   if (!lookup.allowed) return reply(res, 422, { blocked: true, error: lookup.customerMessage, entries });
+
+  // Is the new number switched on and connected? A disconnected or
+  // switched-off phone would never get the code, so don't pay to send it.
+  const status = await checkLineStatus(p.newPhone);
+  entries.push(...status.entries);
+  if (status.blocked) return reply(res, 422, { blocked: true, error: status.customerMessage, entries });
 
   // This proves Leo can receive texts on the new number (it doesn't prove
   // it's Leo; that was the step before).
@@ -209,6 +220,7 @@ router.post('/confirm-new', async (req, res) => {
   a.email = p.newEmail;
   a.phone = p.newPhone;
   a.phoneVerified = true;
+  a.phoneVerifiedAt = new Date().toISOString();
   state.pendingChange = null;
 
   const message = 'Your Twill contact details were just changed. If this wasn\'t you, reply HELP or call us right away.';

@@ -17,6 +17,8 @@ module.exports = {
     verifySms: false,      // Verify: send + check SMS codes
     verifyTotp: false,     // Verify: TOTP factors and challenges
     simSwap: false,        // Lookup v2 SIM Swap
+    reassignedNumber: false, // Lookup v2 Reassigned Number
+    lineStatus: false,     // Lookup v2 Line Status
   },
 
   // Offline mode isn't needed: nothing here ever goes online.
@@ -40,6 +42,15 @@ module.exports = {
   // ---------------------------------------------------------------------------
   allowedLineTypes: ['mobile', 'personal', 'fixedVoip'],
 
+  // Beat 1 — SMS Pumping Risk Score, asked for in the same Lookup request as
+  // the line type (Fields=line_type_intelligence,sms_pumping_risk).
+  // Score is 0 (no risk) to 100 (high risk). Block at or above blockScore, or
+  // if Verify Fraud Guard is blocking the number right now.
+  smsPumpingRisk: {
+    checkAtSignup: true,
+    blockScore: 80,
+  },
+
   // Plain-English reason shown to the customer for each blocked line type.
   lineTypeMessages: {
     nonFixedVoip: "This looks like an internet-based (VoIP) number. For your security, please use a mobile number.",
@@ -48,6 +59,7 @@ module.exports = {
     tollFree: "We can't send codes to toll-free numbers. Please use a mobile number.",
     sharedCost: "We can't send codes to shared-cost numbers. Please use a mobile number.",
     default: "We couldn't confirm this is a mobile number. Please try a different number.",
+    pumpingRisk: "We can't send a code to this number right now. Please try a different number.",
   },
 
   // ---------------------------------------------------------------------------
@@ -90,6 +102,10 @@ module.exports = {
       newShippingAddress: true, // shipping somewhere Leo hasn't shipped before
     },
     simSwapWindowHours: 48, // a SIM change within this window counts as "recent"
+    // Reassigned Number: before texting Leo's number, check it still belongs to
+    // him. LastVerifiedDate is when he verified it at sign-up. If he skipped
+    // Beat 1 (jumping ahead), we pretend he verified it this many days ago.
+    seededPhoneVerifiedDaysAgo: 90,
     // Leo's giveaway order (product id -> quantity). He can change it in the app.
     giveawayOrder: { tin: 6, pan: 4, bag: 10 },
     newAddress: { label: 'Studio', line1: '88 Foundry St, Unit 4', city: 'Portland', state: 'OR', postalCode: '97209' },
@@ -98,8 +114,12 @@ module.exports = {
   // ---------------------------------------------------------------------------
   // Beat 3 — Contact change (account takeover protection)
   // Leo's new business contact details, used by "Fill Leo's details".
+  // The new number goes through Lookup line type AND Line Status before we
+  // pay to text it. Line Status values: active, reachable, unreachable,
+  // inactive, unknown. Blocked statuses are listed here.
   // ---------------------------------------------------------------------------
   contactChange: {
+    blockedLineStatuses: ['inactive', 'unreachable'],
     newEmail: 'hello@leobakes.studio',
     fallbackNewPhone: '+15035550142', // fictional (555-01xx numbers are reserved for fiction)
   },
@@ -130,7 +150,8 @@ module.exports = {
     code: 'LEOBAKES20',
     // The mix of fake sign-ups (adds up to the batch size, 80).
     mix: {
-      goodMobile: 30,        // real customers on mobiles
+      goodMobile: 24,        // real customers on mobiles
+      inactive: 6,           // typos and disconnected numbers (Line Status: inactive / unreachable)
       duplicate: 8,          // someone re-using a number that already got the promo
       voip: 14,              // throwaway internet numbers
       premium: 6,            // premium-rate numbers (fraudster earns per text)

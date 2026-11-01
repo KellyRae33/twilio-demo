@@ -30,6 +30,10 @@ function defaultSettings() {
       identityOverride: 'none', // 'none' | 'strong' | 'partial' | 'noMatch'
       // Beats 2–3: pretend Leo's SIM card was swapped recently.
       recentSimSwap: false,
+      // Beat 2: pretend Leo's number now belongs to someone else.
+      reassignedNumber: false,
+      // Beat 3: force the Line Status of Leo's NEW number.
+      lineStatusOverride: 'none', // 'none' | 'inactive' | 'unreachable'
     },
   };
 }
@@ -44,12 +48,14 @@ function emptyAccount() {
     passwordHash: null, // we never keep the plain password
     phone: null,        // E.164, e.g. +14155550123
     phoneVerified: false,
+    phoneVerifiedAt: null, // when Leo proved he holds the phone (Reassigned Number uses it)
     address: null,      // { line1, city, state, postalCode, country }
     trust: null,        // Identity Match result: { level: 'high'|'medium'|'low'|'unknown', score }
     consent: null,      // { account, marketing, timestamp, text }
     // Verify "Entity" identity: a random ID, not personal data (Twilio's advice).
     verifyIdentity: null,
     totp: null,         // { factorSid, mode, secret (simulated only), verified }
+    passkey: null,      // { factorSid, credentialId, publicKey, alg, verified }
     // Beat 2: devices and shipping addresses Leo has used before. Anything not
     // on these lists is "new" and counts as a risk signal at checkout.
     knownDevices: ['web'],
@@ -77,6 +83,8 @@ function newVisitorState() {
     pendingChange: null,
     // A big redemption waiting for Leo's step-up code (Beat 4).
     pendingRedemption: null,
+    // The one-time challenge for a passkey prompt in progress (sign-up or step-up).
+    pendingPasskey: null,
     // Recent "send code" requests, for this visitor's rate limit (rateLimit.js).
     sendLog: new Map(),
   };
@@ -139,6 +147,7 @@ function reset({ resetSettings = false } = {}) {
   state.pendingOrder = null;
   state.pendingChange = null;
   state.pendingRedemption = null;
+  state.pendingPasskey = null;
 }
 
 module.exports = { state, reset, perVisitor };

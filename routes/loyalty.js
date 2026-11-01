@@ -15,6 +15,7 @@ const config = require('../config');
 const { state } = require('../src/state');
 const { entry } = require('../src/panel');
 const verify = require('../src/verify');
+const passkeys = require('../src/passkeys');
 const { ensureLeoAccount } = require('../src/seed');
 
 const router = express.Router();
@@ -74,10 +75,10 @@ router.post('/redeem', (req, res) => {
     request: { reward: reward.name, points: reward.points },
     response: { balance: a.points, threshold, above_threshold: needsStepUp },
     decision: needsStepUp
-      ? `${fmt(reward.points)} points > ${fmt(threshold)} → hold it and ask for the authenticator code.`
+      ? `${fmt(reward.points)} points > ${fmt(threshold)} → hold it and ask for Leo's passkey or authenticator code.`
       : `${fmt(reward.points)} points ≤ ${fmt(threshold)} → approve straight away, no prompt.`,
     note: needsStepUp
-      ? 'Points are as good as cash, and draining them is a common payoff of account takeover. A code from the authenticator Leo set up at sign-up proves it\'s him, at the moment it matters.'
+      ? 'Points are as good as cash, and draining them is a common payoff of account takeover. The passkey or authenticator Leo set up at sign-up proves it\'s him, at the moment it matters.'
       : 'Small, everyday redemptions stay frictionless. Threshold is in config.js (loyalty).',
   });
 
@@ -87,7 +88,7 @@ router.post('/redeem', (req, res) => {
   }
 
   state.pendingRedemption = reward;
-  reply(res, 200, { status: 'step_up', reward, entries: [checked] });
+  reply(res, 200, { status: 'step_up', reward, factors: passkeys.factorsFor(a), entries: [checked] });
 });
 
 // ---------------------------------------------------------------------------
@@ -95,25 +96,30 @@ router.post('/redeem', (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/step-up', async (req, res) => {
   const reward = state.pendingRedemption;
-  const code = String((req.body || {}).code || '').trim();
   if (!reward) return reply(res, 400, { error: 'There is no redemption waiting. Please choose your reward again.' });
-  if (!/^\d{6}$/.test(code)) return reply(res, 400, { error: 'Enter the 6-digit code from your authenticator app.' });
 
-  const result = await verify.challengeTotp(
-    state.account.verifyIdentity,
-    code,
-    'Verified the authenticator code (step-up)',
+  // Authenticator code or passkey, whichever Leo used.
+  const usedPasskey = Boolean(req.body && req.body.passkey);
+  const result = await verify.confirmSecondFactor(
+    req,
+    req.body,
+    'step-up',
     `it really is Leo. Release ${fmt(reward.points)} points for the ${reward.name}.`
   );
   if (!result.ok) return reply(res, result.error.status || 400, { error: result.error.customer, entries: result.entries });
-  if (!result.approved) return reply(res, 400, { error: "That code didn't match. Codes change every 30 seconds — try the current one.", entries: result.entries });
+  if (!result.approved) {
+    const hint = usedPasskey ? "We couldn't confirm your passkey. Please try again." : "That code didn't match. Codes change every 30 seconds — try the current one.";
+    return reply(res, 400, { error: hint, entries: result.entries });
+  }
 
   const done = completeRedemption(reward);
   const roadmap = entry({
-    title: 'Next step: phishing-resistant step-up',
+    title: usedPasskey ? 'Phishing-resistant step-up' : 'Next step: phishing-resistant step-up',
     mode: 'APP',
     decision: `Redemption ${done.id} complete. New balance: ${fmt(done.balance)} points.`,
-    note: 'A TOTP code can still be phished (a fake site asks Leo to type it in). Roadmap: Verify Passkeys (bound to twill.com, so a look-alike site gets nothing) or Verify Push / Silent Device Approval (Leo taps "Approve" in the Twill app, which shows exactly what he\'s approving).',
+    note: usedPasskey
+      ? 'Leo used a passkey: nothing to type, so nothing to phish. The passkey only works on Twill\'s real site, so a look-alike site gets nothing. Verify Push / Silent Device Approval (Leo taps "Approve" in the Twill app) is the other phishing-resistant option.'
+      : 'A TOTP code can still be phished (a fake site asks Leo to type it in). Better: the passkey Leo was offered at sign-up (bound to Twill\'s real site, so a look-alike gets nothing), or Verify Push / Silent Device Approval (Leo taps "Approve" in the Twill app, which shows exactly what he\'s approving).',
   });
   reply(res, 200, { status: 'complete', redemption: done, entries: [...result.entries, roadmap] });
 });

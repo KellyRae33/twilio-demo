@@ -6,7 +6,8 @@
 //   account  → sign-up form with consent checkboxes
 //   code     → enter the SMS code (only sent if Lookup says the number is OK).
 //              Once approved, the server also runs Identity Match (invisible to Leo).
-//   totpIntro, totpScan → enroll an authenticator app as a second factor
+//   totpIntro → Leo chooses a second factor: a passkey or an authenticator app
+//   totpScan  → (authenticator only) scan the QR code, enter the first code
 //   done     → account ready, order placed
 //
 // All Twilio calls happen on the server (routes/signup.js).
@@ -33,6 +34,7 @@
   let phone;       // E.164 number returned by the server
   let blockedMsg;  // friendly message if Lookup blocked the number
   let qrDataUrl;
+  let secondFactor; // 'passkey' | 'totp': what Leo chose to protect his account
 
   function start(stageEl) {
     stage = stageEl;
@@ -145,9 +147,19 @@
         <div class="steps-mini"><span class="on"></span><span class="on"></span><span class="on"></span></div>
         <div class="notice notice-ok">Phone number confirmed.</div>
         <h1>Protect your account</h1>
-        <p class="sub">Add an authenticator app as a second way to sign in. We'll use it to confirm big orders, reward redemptions and account changes — even if you lose access to your phone number.</p>
+        <p class="sub">Choose a second way to prove it's you. We'll use it to confirm big orders, reward redemptions and account changes — even if you lose access to your phone number.</p>
+        <div class="method-list">
+          ${Twill.passkey.supported ? `
+            <button class="method" id="passkey-start-btn">
+              <b>Passkey <span class="rec-badge">Recommended</span></b>
+              <span class="muted">Use Face ID, your fingerprint, Windows Hello or your phone. Nothing to type, and it can't be phished.</span>
+            </button>` : ''}
+          <button class="method" id="totp-start-btn">
+            <b>Authenticator app</b>
+            <span class="muted">Scan a QR code, then type the 6-digit code the app shows.</span>
+          </button>
+        </div>
         <div id="form-error"></div>
-        <button class="btn btn-block" id="totp-start-btn">Set up authenticator app</button>
       </div>`,
 
     totpScan: () => `
@@ -168,7 +180,7 @@
       <div class="form-narrow center">
         <div class="big-check">✓</div>
         <h1>Welcome to Twill, ${esc((form.name || 'Leo').split(' ')[0])}</h1>
-        <p class="sub">Your account is protected with a verified phone number and an authenticator app.</p>
+        <p class="sub">Your account is protected with a verified phone number and ${secondFactor === 'passkey' ? 'a passkey' : 'an authenticator app'}.</p>
         <div class="card" style="text-align:left">
           <h2>Order confirmed</h2>
           ${cart.map((id) => { const p = PRODUCTS.find((x) => x.id === id); return `<div class="summary-line"><span>${p.name}</span><span>${ui.money(p.price)}</span></div>`; }).join('')}
@@ -216,6 +228,9 @@
 
     const totpStart = document.getElementById('totp-start-btn');
     if (totpStart) totpStart.addEventListener('click', onTotpStart);
+
+    const passkeyStart = document.getElementById('passkey-start-btn');
+    if (passkeyStart) passkeyStart.addEventListener('click', onPasskeyStart);
 
     const totpForm = document.getElementById('totp-form');
     if (totpForm) {
@@ -299,6 +314,19 @@
     show('totpScan');
   }
 
+  // Step 4 (passkey): the browser asks Leo's device to create a passkey; the
+  // server checks it and keeps the public key. No step 5 needed.
+  async function onPasskeyStart() {
+    const btn = document.getElementById('passkey-start-btn');
+    ui.busy(btn, true, 'Waiting for your device…');
+    const res = await Twill.passkey.register();
+    ui.busy(btn, false);
+    if (!res.ok) return showError(res.data.error);
+    secondFactor = 'passkey';
+    show('done');
+    Twill.journey.complete('signup');
+  }
+
   // Step 5: confirm the first code from the app.
   async function onTotpVerify(e) {
     e.preventDefault();
@@ -308,6 +336,7 @@
     const res = await Twill.post('/api/signup/totp/verify', { code });
     ui.busy(btn, false);
     if (!res.ok) return showError(res.data.error);
+    secondFactor = 'totp';
     show('done');
     Twill.journey.complete('signup');
   }

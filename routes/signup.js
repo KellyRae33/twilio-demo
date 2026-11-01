@@ -3,7 +3,7 @@
 //
 // Order of operations (each step is one endpoint the browser calls):
 //   1. POST /api/signup/account      save profile + consent (with timestamp)
-//   2. POST /api/signup/send-code    rate limit → Lookup line type → Verify SMS
+//   2. POST /api/signup/send-code    rate limit → Lookup line type + SMS pumping risk → Verify SMS
 //   3. POST /api/signup/check-code   Verify check → Lookup Identity Match
 //   4. POST /api/signup/totp/start   create TOTP factor → QR code
 //   5. POST /api/signup/totp/verify  confirm first TOTP code
@@ -121,8 +121,9 @@ router.post('/send-code', async (req, res) => {
     return reply(res, 429, { error: "You've requested several codes. Please wait a few minutes and try again.", entries });
   }
 
-  // 2b. Lookup Line Type Intelligence. Risky line types never get an SMS.
-  const lookup = await checkLineType(phone);
+  // 2b. Lookup Line Type Intelligence (+ SMS Pumping Risk in the same request).
+  // Risky line types and high-risk numbers never get an SMS.
+  const lookup = await checkLineType(phone, { withPumpingRisk: config.smsPumpingRisk.checkAtSignup });
   entries.push(...lookup.entries);
   if (!lookup.allowed) {
     return reply(res, 422, { blocked: true, lineType: lookup.type, error: lookup.customerMessage, entries });
@@ -150,6 +151,7 @@ router.post('/check-code', async (req, res) => {
   if (!result.approved) return reply(res, 400, { error: "That code didn't match. Please try again.", entries: result.entries });
 
   state.account.phoneVerified = true;
+  state.account.phoneVerifiedAt = new Date().toISOString(); // Reassigned Number checks use this later
 
   // Now that we know Leo holds this phone, ask: do the carrier's records for
   // this number match the name and address he gave us? This sets a trust

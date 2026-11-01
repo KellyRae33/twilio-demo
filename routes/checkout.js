@@ -4,10 +4,11 @@
 //
 //   POST /api/checkout/start    load Leo's account + the app's starting order
 //   POST /api/checkout/place    price the order → risk signals. No signals:
-//                               approve. Any signal: silent SIM Swap check,
-//                               then a step-up code:
-//                                 SIM stable  → Verify SMS code to Leo's phone
-//                                 SIM swapped → authenticator app (never SMS)
+//                               approve. Any signal: silent SIM Swap and
+//                               Reassigned Number checks, then a step-up code:
+//                                 number trusted → Verify SMS code to Leo's phone
+//                                 SIM swapped or number reassigned →
+//                                   authenticator app or passkey (never SMS)
 //   POST /api/checkout/resend   send a fresh SMS code
 //   POST /api/checkout/step-up  check the code → complete the order
 //
@@ -21,8 +22,9 @@ const config = require('../config');
 const { state } = require('../src/state');
 const { entry } = require('../src/panel');
 const { PRODUCTS, priceOrder } = require('../src/catalog');
-const { checkSimSwap } = require('../src/lookup');
+const { checkSimSwap, checkReassignedNumber } = require('../src/lookup');
 const verify = require('../src/verify');
+const passkeys = require('../src/passkeys');
 const rateLimit = require('../src/rateLimit');
 const { ensureLeoAccount } = require('../src/seed');
 
@@ -141,26 +143,47 @@ router.post('/place', async (req, res) => {
   const simSwap = await checkSimSwap(state.account.phone);
   entries.push(...simSwap.entries);
 
-  // 3. Decide the step-up channel. The SIM Swap result says whether Leo's phone
-  //    number can be trusted to receive a code.
-  const trust = state.account.trust || { level: 'unknown' };
-  state.pendingOrder = { ...order, method: simSwap.swappedRecently ? 'totp' : 'sms' };
+  // 3. Leo is back months after sign-up: is his number still HIS? (Only
+  //    needed if we're about to text it, so skip it after a SIM swap.)
+  let reassigned = { reassigned: false };
+  if (!simSwap.swappedRecently) {
+    reassigned = await checkReassignedNumber(state.account.phone, state.account.phoneVerifiedAt);
+    entries.push(...reassigned.entries);
+  }
 
-  if (simSwap.swappedRecently) {
+  // 4. Decide the step-up channel. The SIM Swap and Reassigned Number results
+  //    say whether Leo's phone number can be trusted to receive a code.
+  const trust = state.account.trust || { level: 'unknown' };
+  const phoneUntrusted = simSwap.swappedRecently || reassigned.reassigned;
+  // 'factor' = Leo's authenticator app or passkey, whichever he set up.
+  state.pendingOrder = { ...order, method: phoneUntrusted ? 'factor' : 'sms' };
+
+  if (phoneUntrusted) {
     entries.push(entry({
-      title: 'Step-up required: authenticator app, not SMS',
+      title: 'Step-up required: authenticator app or passkey, not SMS',
       mode: 'APP',
-      decision: 'Recent SIM swap → hold the order and ask for a code from Leo\'s authenticator app.',
-      note: "Why not an SMS code? After a SIM swap, Leo's texts may be going to the attacker's phone, so an SMS code would prove nothing. The authenticator app lives on Leo's device and doesn't depend on the phone number.",
+      decision: simSwap.swappedRecently
+        ? 'Recent SIM swap → hold the order and ask for Leo\'s passkey or authenticator code.'
+        : 'Number reassigned → hold the order and ask for Leo\'s passkey or authenticator code.',
+      note: simSwap.swappedRecently
+        ? "Why not an SMS code? After a SIM swap, Leo's texts may be going to the attacker's phone, so an SMS code would prove nothing. A passkey or authenticator app lives on Leo's device and doesn't depend on the phone number."
+        : "Why not an SMS code? The number now belongs to someone else, so the code would reach a stranger. Twill should also ask Leo to update his number.",
     }));
-    return reply(res, 200, { status: 'step_up', method: 'totp', total, entries });
+    return reply(res, 200, {
+      status: 'step_up',
+      method: 'factor',
+      reason: simSwap.swappedRecently ? 'sim_swap' : 'reassigned',
+      factors: passkeys.factorsFor(state.account),
+      total,
+      entries,
+    });
   }
 
   entries.push(entry({
     title: 'Step-up required: SMS code to Leo\'s phone',
     mode: 'APP',
-    decision: `SIM looks stable (sign-up trust: ${trust.level}) → his number is safe to use. Hold the order and text him a one-time code.`,
-    note: 'One quick check on a risky order. If the SIM had been swapped recently, this would switch to the authenticator app instead.',
+    decision: `SIM looks stable and the number is still his (sign-up trust: ${trust.level}) → safe to use. Hold the order and text him a one-time code.`,
+    note: 'One quick check on a risky order. If the SIM had been swapped recently, or the number had changed owners, this would switch to the authenticator app instead.',
   }));
 
   const sent = await sendOrderCode(req);
@@ -203,25 +226,25 @@ router.post('/resend', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/step-up', async (req, res) => {
   const pending = state.pendingOrder;
-  const code = String((req.body || {}).code || '').trim();
   if (!pending) return reply(res, 400, { error: 'There is no order waiting. Please place it again.' });
-  if (!/^\d{6}$/.test(code)) return reply(res, 400, { error: 'Enter the 6-digit code.' });
 
   let result;
   if (pending.method === 'sms') {
+    const code = String((req.body || {}).code || '').trim();
+    if (!/^\d{6}$/.test(code)) return reply(res, 400, { error: 'Enter the 6-digit code.' });
     result = await verify.checkSmsCode(state.account.phone, code, 'Checked the order confirmation code');
   } else {
-    result = await verify.challengeTotp(
-      state.account.verifyIdentity,
-      code,
-      'Verified the authenticator code (step-up)',
-      'it really is Leo. Release the order.'
-    );
+    // Authenticator code or passkey, whichever Leo used.
+    result = await verify.confirmSecondFactor(req, req.body, 'step-up', 'it really is Leo. Release the order.');
   }
   if (!result.ok) return reply(res, result.error.status || 400, { error: result.error.customer, entries: result.entries });
   if (!result.approved) {
-    const hint = pending.method === 'sms' ? 'Please check the text and try again.' : 'Codes change every 30 seconds — try the current one.';
-    return reply(res, 400, { error: `That code didn't match. ${hint}`, entries: result.entries });
+    const hint = pending.method === 'sms'
+      ? "That code didn't match. Please check the text and try again."
+      : req.body && req.body.passkey
+        ? "We couldn't confirm your passkey. Please try again."
+        : "That code didn't match. Codes change every 30 seconds — try the current one.";
+    return reply(res, 400, { error: hint, entries: result.entries });
   }
 
   const { method, ...order } = pending;

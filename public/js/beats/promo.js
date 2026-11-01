@@ -17,6 +17,7 @@
   const OUTCOMES = {
     sent: { label: 'Code sent', cls: 'chip-ok' },
     blocked_line_type: { label: 'Blocked · line type', cls: 'chip-warn' },
+    blocked_line_status: { label: 'Blocked · line status', cls: 'chip-info' },
     blocked_fraud_guard: { label: 'Blocked · Fraud Guard', cls: 'chip-bad' },
     blocked_duplicate: { label: 'Blocked · duplicate', cls: 'chip-muted' },
   };
@@ -24,6 +25,7 @@
   const TILES = [
     ['attempted', 'Sign-ups attempted'],
     ['blockedLineType', 'Blocked by line type'],
+    ['blockedLineStatus', 'Blocked by line status'],
     ['blockedFraudGuard', 'Blocked by Fraud Guard'],
     ['blockedDuplicate', 'Blocked as duplicate'],
     ['sent', 'Codes actually sent'],
@@ -99,8 +101,8 @@
 
   // Replay the server's results one sign-up at a time.
   async function replay(data) {
-    const totals = { attempted: 0, blockedLineType: 0, blockedFraudGuard: 0, blockedDuplicate: 0, sent: 0, spendAvoided: 0 };
-    const KEY = { sent: 'sent', blocked_line_type: 'blockedLineType', blocked_fraud_guard: 'blockedFraudGuard', blocked_duplicate: 'blockedDuplicate' };
+    const totals = { attempted: 0, blockedLineType: 0, blockedLineStatus: 0, blockedFraudGuard: 0, blockedDuplicate: 0, sent: 0, spendAvoided: 0 };
+    const KEY = { sent: 'sent', blocked_line_type: 'blockedLineType', blocked_line_status: 'blockedLineStatus', blocked_fraud_guard: 'blockedFraudGuard', blocked_duplicate: 'blockedDuplicate' };
     const feed = document.getElementById('promo-feed');
     feed.innerHTML = '';
 
@@ -130,7 +132,7 @@
       document.getElementById('t-' + key).textContent = key === 'spendAvoided' ? '$' + t[key].toFixed(2) : t[key];
     }
     // Stacked bar: share of each outcome so far.
-    const parts = [['sent', 'chip-ok'], ['blockedLineType', 'chip-warn'], ['blockedFraudGuard', 'chip-bad'], ['blockedDuplicate', 'chip-muted']];
+    const parts = [['sent', 'chip-ok'], ['blockedLineType', 'chip-warn'], ['blockedLineStatus', 'chip-info'], ['blockedFraudGuard', 'chip-bad'], ['blockedDuplicate', 'chip-muted']];
     document.getElementById('promo-bar').innerHTML = parts
       .map(([k, cls]) => `<span class="${cls}" style="width:${(100 * t[k]) / t.attempted}%"></span>`)
       .join('');
