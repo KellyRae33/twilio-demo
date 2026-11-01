@@ -1,0 +1,9 @@
+# Render Blueprint: deploys this folder as a free Node web service.
+# No environment variables are needed: the public demo never calls Twilio.
+services:
+  - type: web
+    name: twill-demo
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start

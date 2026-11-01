@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twill — Customer Journey Demo</title>
+  <!-- No external fonts or scripts: the demo must work with no internet (Offline mode). -->
+  <link rel="icon" type="image/png" href="img/twill-icon.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- ===== Top bar: the five beats of the story ===== -->
+  <header class="journey">
+    <div class="journey-title">Leo's journey</div>
+    <ol class="journey-steps" id="journey-steps"><!-- filled by journey.js --></ol>
+    <div class="journey-right">
+      <span class="pill pill-offline" id="offline-pill" hidden>Offline mode</span>
+      <button class="icon-btn" id="presenter-open" title="Demo controls ( ` )" aria-label="Demo controls">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.5 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5L19.4 13ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- ===== Left: what Leo sees ===== -->
+    <main class="stage" id="stage"><!-- each beat draws itself here --></main>
+
+    <!-- ===== Right: "Behind the scenes" ===== -->
+    <aside class="panel" id="panel">
+      <div class="panel-head">
+        <button class="panel-toggle" id="panel-toggle" title="Collapse panel" aria-label="Collapse panel">›</button>
+        <h2>Behind the scenes</h2>
+        <button class="link-btn" id="panel-clear">Clear</button>
+      </div>
+      <div class="panel-legend">
+        <span><span class="tag tag-sim">SIMULATED</span> realistic fake Twilio response</span>
+        <span><span class="tag tag-app">APP</span> our own server, no Twilio call</span>
+      </div>
+      <div class="panel-log" id="panel-log">
+        <p class="panel-empty">Each step Twill's server takes will appear here.<br><br>This public copy never calls Twilio: every Twilio step is simulated, in the shape the real API returns. Codes appear on screen instead of being texted.<br><br>Tip: the gear icon (or the ` key) has "Fill Leo's details", scenarios such as a VoIP number or a recent SIM swap, and Reset.</p>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===== Demo controls (hidden until gear icon or ` key) ===== -->
+  <div class="drawer-backdrop" id="presenter-backdrop" hidden></div>
+  <section class="drawer" id="presenter" hidden aria-label="Demo controls">
+    <div class="drawer-head">
+      <h2>Demo controls</h2>
+      <button class="icon-btn" id="presenter-close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="presenter-body"><!-- filled by presenter.js --></div>
+  </section>
+
+  <!-- Simulated text message notifications appear here -->
+  <div class="toasts" id="toasts"></div>
+
+  <!-- Plain scripts, loaded in order. Each adds to the global `Twill` object. -->
+  <script src="js/api.js"></script>
+  <script src="js/panel.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/journey.js"></script>
+  <script src="js/presenter.js"></script>
+  <script src="js/beats/signup.js"></script>
+  <script src="js/beats/checkout.js"></script>
+  <script src="js/beats/contact.js"></script>
+  <script src="js/beats/loyalty.js"></script>
+  <script src="js/beats/promo.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
