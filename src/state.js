@@ -33,7 +33,7 @@ function defaultSettings() {
       // Beat 2: pretend Leo's number now belongs to someone else.
       reassignedNumber: false,
       // Beat 3: force the Line Status of Leo's NEW number.
-      lineStatusOverride: 'none', // 'none' | 'inactive' | 'unreachable'
+      lineStatusOverride: 'none', // 'none' | 'active' | 'inactive' | 'unreachable'
     },
   };
 }
