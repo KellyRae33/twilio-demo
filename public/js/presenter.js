@@ -72,7 +72,7 @@ Twill.presenter = (function () {
       <div class="ctl-row">
         <div>New number's line status<small>Beat 3: force the Line Status result for Leo's new number</small></div>
         <select data-scenario="lineStatusOverride">
-          ${[['none', 'Normal (reachable)'], ['active', 'Active'], ['inactive', 'Inactive'], ['unreachable', 'Unreachable']]
+          ${[['none', 'Normal (reachable)'], ['active', 'Active'], ['reachable', 'Reachable'], ['inactive', 'Inactive'], ['unreachable', 'Unreachable']]
             .map(([v, l]) => `<option value="${v}" ${s.scenarios.lineStatusOverride === v ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
       </div>
